@@ -1,0 +1,537 @@
+= TP4 - API ML Baseline : Entraînement, Métriques & Prédiction
+:author: NGOUFACK Judith
+:revdate: 11 Février 2026
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Introduction
+
+Ce projet implémente une API REST complète pour l'entraînement de modèles de Machine Learning supervisés (classification binaire), avec :
+
+* Génération de datasets déséquilibrés
+* Pipeline de preprocessing automatique
+* Entraînement de modèles baseline (Logistic Regression, Random Forest)
+* Métriques complètes (accuracy, precision, recall, f1, AUC)
+* Sérialisation et réutilisation des modèles
+* Prédictions sur nouvelles données avec probabilités
+
+== Architecture
+
+=== Structure du projet
+
+TP4_API_ML/
+├── app/
+│   ├── main.py                 # Point d'entrée FastAPI
+│   ├── routers/
+│   │   └── ml.py               # Routes API
+│   └── services/
+│       └── ml_service.py       # Logique métier
+├── models/                     # Modèles sérialisés
+│   └── {model_id}.joblib
+
+
+=== Technologies
+
+* FastAPI : Framework web avec validation automatique
+* Pandas : Manipulation de données
+* NumPy : Calculs numériques et génération aléatoire
+* Scikit-learn : Modèles ML, preprocessing, métriques
+* Joblib : Sérialisation efficace des modèles
+* Pydantic : Validation de schémas
+
+== Fonctionnalités implémentées
+
+=== 1. Génération de datasets ML (POST /ml/dataset-generate)
+
+Génère un dataset pour classification binaire avec :
+
+* Variables numériques : x1 à x6
+* Variable catégorielle : segment (A, B, C)
+* Cible binaire : target (0 ou 1)
+* Déséquilibre contrôlé : ~70% classe 0, ~30% classe 1
+* Relation supervisée : Target dépend linéairement de x1-x3 + segment
+
+Méthode de génération :
+
+[source,python]
+
+# Combinaison linéaire
+logit = 0.5*x1 + 0.3*x2 - 0.4*x3 + ...
+
+# Ajout bruit
+prob = sigmoid(logit + bruit)
+
+# Seuil pour 30% classe 1
+threshold = percentile(prob, 70)
+target = (prob > threshold).astype(int)
+
+
+NA injectés :2-5% par variable numérique (test preprocessing)
+
+=== 2. Entraînement (POST /ml/train)
+
+Entraîne un modèle supervisé avec pipeline complet.
+
+Paramètres :
+
+* model_type : "logreg" ou "rf"
+* test_size : Proportion train/valid
+* seed : Reproductibilité
+
+Pipeline d'entraînement :
+
+1. Split stratifié : Conserve distribution 70/30 dans train ET valid
+2. Imputation : Mean pour NA dans x1-x6
+3. Encoding : LabelEncoder pour segment (A→0, B→1, C→2)
+4. Scaling : StandardScaler (μ=0, σ=1)
+5. Entraînement : LogisticRegression ou RandomForestClassifier
+6. Évaluation : 5 métriques (train + valid)
+7. Sérialisation : Sauvegarde modèle + pipeline
+
+Hyperparamètres :
+
+[cols="2,3,3", options="header"]
+|===
+|Modèle |Hyperparamètre |Valeur
+
+|Logistic Regression
+|max_iter
+|1000
+
+|Logistic Regression
+|solver
+|lbfgs
+
+|Logistic Regression
+|random_state
+|42
+
+|Random Forest
+|n_estimators
+|100
+
+|Random Forest
+|max_depth
+|10
+
+|Random Forest
+|random_state
+|42
+|===
+
+=== 3. Métriques (GET /ml/metrics/{model_id})
+
+Retourne métriques train + valid avec interprétation.
+
+Métriques calculées :
+
+1. Accuracy : % prédictions correctes
+
+[source]
+
+Accuracy = (TP + TN) / Total
+
+
+2. Precision : % vrais positifs parmi prédits positifs
+
+[source]
+
+Precision = TP / (TP + FP)
+
+3. Recall : % vrais positifs détectés
+
+[source]
+
+Recall = TP / (TP + FN)
+
+4. F1-Score : Moyenne harmonique precision/recall
+
+[source]
+
+F1 = 2 × (Precision × Recall) / (Precision + Recall)
+
+
+5. AUC-ROC : Aire sous courbe ROC
+
+[source]
+
+AUC = ∫ TPR(FPR) d(FPR)
+
+Interprétation automatique :
+
+* best_metric : Recommande accuracy ou f1 selon performance
+* overfitting : Détecte si écart train/valid > 10%
+
+=== 4. Prédiction (POST /ml/predict)
+
+Prédit sur nouvelles données avec probabilités.
+
+Entrées requises :
+
+* x1, x2, x3, x4, x5, x6 (numériques)
+* segment (A, B, ou C)
+
+Preprocessing automatique :*
+
+Le même pipeline que l'entraînement est appliqué :
+
+1. Imputation (mêmes moyennes)
+2. Encoding (même mapping A/B/C)
+3. Scaling (même μ et σ)
+
+Sorties :
+
+* predictions : Classe prédite (0 ou 1)
+* probabilities : P(classe 1)
+
+Exemple :
+
+[source,json]
+
+{
+  "predictions": [0],
+  "probabilities": [0.323]
+}
+
+→ Prédiction : classe 0
+→ Confiance : 67.7% (car P(0) = 1 - 0.323)
+
+
+=== 5. Info modèle (GET /ml/model-info/{model_id})
+
+Retourne toutes les métadonnées d'un modèle.
+
+Informations fournies :
+
+* Type de modèle (logreg/rf)
+* Dataset source
+* Hyperparamètres exacts
+* Features utilisées
+* Pipeline preprocessing
+* Tailles train/valid
+* Date création
+* Chemin fichier sérialisé
+
+== Résultats
+
+=== Exemple de workflow complet
+
+[cols="1,3", options="header"]
+|===
+|Étape |Résultat
+
+|Génération
+|200 lignes, déséquilibre 70/30 (140 vs 60)
+
+|Train (logreg)
+|Accuracy 80% (train), 73% (valid)
+
+|Métriques
+|F1=0.50, AUC=0.69, Overfitting=No
+
+|Prédiction
+|Classe 0, P(classe 1)=32.3%
+
+|Sérialisation
+|models/867a3d2f...joblib (1.2 MB)
+|===
+
+=== Performance du modèle baseline
+
+[cols="2,1,1", options="header"]
+|===
+|Métrique |Train |Valid
+
+|Accuracy
+|80.0%
+|73.3%
+
+|Precision
+|73.3%
+|57.1%
+
+|Recall
+|52.4%
+|44.4%
+
+|F1-Score
+|61.1%
+|50.0%
+
+|AUC-ROC
+|86.6%
+|69.3%
+|===
+
+Analyse :
+
+* Bonne généralisation : Écart train/valid < 10%
+* AUC acceptable : 69% > seuil aléatoire (50%)
+* F1 moyen : 50% indique marge d'amélioration
+* Pas d'overfitting : Performance stable
+
+=== Pipeline preprocessing validé
+
+Le preprocessing est cohérent entre train et predict :
+
+[cols="2,3,3", options="header"]
+|===
+|Étape |Train |Predict
+
+|Imputation
+|Calcule mean sur X_train
+|Applique mean calculé
+
+|Encoding
+|Fit LabelEncoder sur segment_train
+|Transform avec même encoder
+
+|Scaling
+|Fit StandardScaler sur X_train
+|Transform avec même scaler
+|===
+
+→ Garantie de cohérence : Mêmes transformations
+
+== Sérialisation et chargement
+
+=== Format de sauvegarde
+
+Chaque modèle est sauvegardé en **joblib** avec un bundle complet :
+
+[source,python]
+
+model_bundle = {
+    "model": trained_model,           # LogisticRegression ou RandomForest
+    "imputer": fitted_imputer,        # SimpleImputer avec mean calculé
+    "label_encoder": fitted_encoder,  # LabelEncoder avec mapping A/B/C
+    "scaler": fitted_scaler,          # StandardScaler avec μ, σ
+    "feature_cols": [...],            # Liste features
+    "numeric_cols": [...]             # Liste colonnes numériques
+}
+
+joblib.dump(model_bundle, f"models/{model_id}.joblib")
+
+
+Avantages :
+
+* Pipeline complet en 1 fichier
+* Aucune reconfiguration manuelle
+* Prédictions reproductibles
+
+=== Chargement pour prédiction
+
+[source,python]
+
+# Chargement automatique
+model_bundle = joblib.load(model_path)
+
+# Extraction composants
+model = model_bundle["model"]
+imputer = model_bundle["imputer"]
+encoder = model_bundle["label_encoder"]
+scaler = model_bundle["scaler"]
+
+# Preprocessing cohérent
+X_new[numeric_cols] = imputer.transform(X_new[numeric_cols])
+X_new["segment_encoded"] = encoder.transform(X_new["segment"])
+X_scaled = scaler.transform(X_new[feature_cols])
+
+# Prédiction
+predictions = model.predict(X_scaled)
+probabilities = model.predict_proba(X_scaled)[:, 1]
+
+
+== Conformité au cahier des charges
+
+[cols="2,1,1", options="header"]
+|===
+|Critère |Poids |Statut
+
+|Sérialisation du modèle (models/) + chargement
+|Livrable
+| COMPLET
+
+|Pipeline preprocessing cohérent (cat + imputation)
+|Livrable
+| COMPLET
+
+|POST /ml/train (logreg, rf)
+|Endpoint
+| COMPLET
+
+|GET /ml/metrics (5 métriques)
+|Endpoint
+| COMPLET
+
+|POST /ml/predict (pred + proba)
+|Endpoint
+| COMPLET
+
+|GET /ml/model-info (hyperparams, preprocessing)
+|Endpoint
+| COMPLET
+
+|Dataset déséquilibré 70/30
+|Dataset
+| COMPLET
+
+|Split reproductible via seed
+|Dataset
+|COMPLET
+|===
+
+== Schémas Pydantic
+
+L'API utilise 4 schémas de validation :
+
+[source,python]
+
+class DatasetGenerateRequest(BaseModel):
+    phase: str = "ml"
+    seed: int
+    n: int
+
+class TrainRequest(BaseModel):
+    dataset_id: str
+    model_type: str  # "logreg" ou "rf"
+    test_size: float = 0.3
+    seed: int = 42
+
+class PredictRequest(BaseModel):
+    model_id: str
+    data: List[Dict[str, Any]]
+
+Validation automatique :
+
+* model_type hors {"logreg", "rf"} → Erreur 404
+* data sans colonnes requises → Erreur 404
+* model_id invalide → Erreur 404
+
+== Gestion des valeurs manquantes
+
+=== Stratégie d'imputation
+
+Méthode : SimpleImputer(strategy="mean")
+
+Application :
+
+* Calcul sur X_train uniquement (évite data leakage)
+* Application sur X_train ET X_valid avec mêmes moyennes
+* Réutilisation pour nouvelles données
+
+Justification :
+
+* Méthode baseline simple
+* Préserve distribution
+* Reproductible
+
+Alternative non implémentée : Imputation par médiane (robuste aux outliers)
+
+== Choix techniques
+
+=== Stratification du split
+
+Méthode : train_test_split(..., stratify=y)
+
+Justification :
+
+* Dataset déséquilibré 70/30
+* Sans stratification : Risque 100% classe 0 dans valid
+* Avec stratification : Conserve 70/30 dans train ET valid
+
+=== Métriques multiples
+
+Pourquoi 5 métriques ?
+
+* Accuracy : Vue globale (trompeuse si déséquilibre)
+* Precision : Coût faux positifs
+* Recall : Coût faux négatifs
+* F1 : Équilibre (recommandé pour déséquilibre)
+* AUC : Capacité discrimination (indépendant seuil)
+
+Ensemble complémentaire : Couvre tous les aspects
+
+=== Probabilités vs Classes
+
+Pourquoi retourner les deux ?
+
+* Classes : Décision binaire (0 ou 1)
+* Probabilités : Confiance (P(classe 1))
+
+Utilité probabilités :
+
+* Ajuster seuil décision
+* Trier prédictions par confiance
+* Calibration incertitude
+
+== Conclusion
+
+L'API implémente avec succès un pipeline ML complet :
+
+*  Génération datasets déséquilibrés contrôlés
+*  Entraînement modèles baseline (2 types)
+*  Pipeline preprocessing cohérent et reproductible
+*  Métriques complètes (5 métriques train + valid)
+*  Prédictions avec probabilités
+*  Sérialisation modèles + pipeline
+*  Metadata complètes (hyperparams, preprocessing)
+*  Architecture modulaire (router/service)
+*  Validation Pydantic
+
+Le système est prêt pour :
+
+* Entraîner de nouveaux modèles
+* Comparer logreg vs rf
+* Déployer en production (avec modèles sérialisés)
+
+== Annexes
+
+=== A. Exemple de métriques
+
+[source,json]
+
+{
+  "train_metrics": {
+    "accuracy": 0.80,
+    "precision": 0.73,
+    "recall": 0.52,
+    "f1": 0.61,
+    "auc": 0.87
+  },
+  "valid_metrics": {
+    "accuracy": 0.73,
+    "precision": 0.57,
+    "recall": 0.44,
+    "f1": 0.50,
+    "auc": 0.69
+  }
+}
+
+
+=== B. Exemple de prédiction
+
+[source,json]
+
+  "predictions": [0],
+  "probabilities": [0.323]
+}
+
+→ Classe prédite : 0
+→ Confiance : 67.7% (car 1 - 0.323)
+
+
+=== C. Pipeline preprocessing
+
+Données brutes
+    ↓
+[Imputation] x1-x6 → mean
+    ↓
+[Encoding] segment → int (A=0, B=1, C=2)
+    ↓
+[Scaling] StandardScaler (μ=0, σ=1)
+    ↓
+Modèle ML

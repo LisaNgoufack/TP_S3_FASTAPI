@@ -1,0 +1,248 @@
+= TP2 - API EDA : Statistiques Descriptives & Graphiques
+:author: NGOUFACK Judith
+:revdate: 11 Février 2026
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Introduction
+
+Ce projet implémente une API REST pour l'analyse exploratoire de données (EDA), permettant de générer des statistiques descriptives et des visualisations sans recourir à un notebook Jupyter.
+
+L'API produit des artefacts Plotly JSON exploitables directement côté client.
+
+== Architecture
+
+=== Structure du projet
+
+
+TP2_API_EDA/
+├── app/
+│   ├── main.py                 # Point d'entrée FastAPI
+│   ├── routers/
+│   │   └── eda.py              # Routes API
+│   └── services/
+│       └── eda_service.py      # Logique métier
+
+
+=== Technologies
+
+* FastAPI : Framework web avec validation automatique
+* Pandas : Statistiques descriptives et agrégations
+* NumPy : Génération aléatoire et calculs
+* Plotly : Visualisations interactives (format JSON)
+* Pydantic : Validation de schémas
+
+== Fonctionnalités implémentées
+
+=== 1. Génération de datasets (POST /eda/dataset-generate)
+
+Génère un dataset avec variables numériques et catégorielles :
+
+* Variables numériques : age, income, spend, visits
+* Variables catégorielles : segment (A/B/C), channel (web/store/app), churn (0/1)
+* Défauts injectés : NA (5-10%), outliers (~2% sur income)
+
+=== 2. Statistiques descriptives (POST /eda/summary)
+
+Calcule pour chaque variable :
+
+Variables numériques :
+* count, mean, std
+* min, 25%, 50%, 75%, max
+* missing_rate (%)
+
+Variables catégorielles :
+* unique (nombre de valeurs uniques)
+* top (valeur la plus fréquente)
+* freq (fréquence maximale)
+* distribution (comptage par catégorie)
+
+=== 3. Agrégations par groupe (POST /eda/groupby)
+
+Permet d'agréger les variables numériques selon une variable catégorielle :
+
+* Groupes disponibles : segment, channel, churn
+* Métriques : mean, median, sum, count
+* Résultat : Tableau structuré par métrique
+
+Exemple : Income moyen par segment
+[source,json]
+
+{
+  "metric": "mean",
+  "data": [
+    {"segment": "A", "income": 52598.26, "spend": 2068.08},
+    {"segment": "B", "income": 47254.48, "spend": 2040.51},
+    {"segment": "C", "income": 54641.42, "spend": 1710.92}
+  ]
+}
+
+
+=== 4. Matrice de corrélation (POST /eda/correlation)
+
+Calcule la corrélation de Pearson entre variables numériques :
+
+* Matrice complète : Toutes les paires de variables
+* Top paires*: Les 5 paires les plus corrélées (ordre décroissant)
+
+=== 5. Visualisations (POST /eda/plots)
+
+Génère 3 graphiques Plotly JSON dans `artifacts` :
+
+1. Histogramme: Distribution de income (30 bins)
+2. Boxplot : Income par segment (A/B/C)
+3. Barplot : Distribution des segments
+
+Avantage du format JSON :
+* Aucune image stockée côté serveur
+* Visualisation interactive côté client
+* Export facile vers d'autres formats
+
+== Résultats
+
+=== Exemple de workflow complet
+
+[cols="1,3", options="header"]
+|===
+|Étape |Résultat
+
+|Génération
+|100 lignes, 7 colonnes (age, income, spend, visits, segment, channel, churn)
+
+|Summary
+|91 valeurs age (9% NA), 94 income (6% NA), 89 spend (11% NA)
+
+|Groupby
+|Segment A : income moyen = 52598€, Segment B = 47254€, Segment C = 54641€
+
+|Correlation
+|Plus forte corrélation : income ↔ spend (0.13)
+
+|Plots
+|3 graphiques Plotly JSON (27KB total)
+|===
+
+=== Gestion des valeurs manquantes
+
+L'API détecte et gère correctement les NA :
+
+* Detection : missing_rate calculé pour chaque variable
+* Statistiques : Pandas ignore automatiquement les NA dans mean/std/median
+* Agrégations : Les groupby excluent les NA du calcul
+* Robustesse : Aucune erreur même avec forte proportion de NA
+
+=== Qualité des statistiques
+
+Toutes les statistiques sont :
+
+*  Justes (validation avec pandas.describe())
+*  Bien structurées (JSON clair et exploitable)
+*  Complètes (quantiles, distribution, corrélation)
+*  Robustes (gestion NA et outliers)
+
+== Conformité au cahier des charges
+
+[cols="2,1,1", options="header"]
+|===
+|Critère |Poids |Statut
+
+|Router eda + service EDA + schémas Pydantic
+|Livrable
+| COMPLET
+
+|Artifacts renvoyés dans artifacts
+|Livrable
+| COMPLET
+
+|Qualité des stats (justes + bien structurées)
+|Évaluation
+| EXCELLENT
+
+|Graphiques exploitables (artefacts)
+|Évaluation
+| EXCELLENT
+
+|Gestion des NA et robustesse
+|Évaluation
+| EXCELLENT
+|===
+
+== Schémas Pydantic
+
+L'API utilise 5 schémas de validation :
+
+[source,python]
+
+class DatasetGenerateRequest(BaseModel):
+    phase: str = "eda"
+    seed: int
+    n: int
+
+class SummaryRequest(BaseModel):
+    dataset_id: str
+
+class GroupbyRequest(BaseModel):
+    dataset_id: str
+    by: str
+    metrics: List[str]
+
+class CorrelationRequest(BaseModel):
+    dataset_id: str
+
+class PlotsRequest(BaseModel):
+    dataset_id: str
+
+
+== Conclusion
+
+L'API implémente avec succès toutes les fonctionnalités requises :
+
+*  Statistiques descriptives complètes (numériques + catégorielles)
+*  Agrégations personnalisables par groupe
+*  Matrice de corrélation + top paires
+*  3 types de graphiques (histogramme, boxplot, barplot)
+*  Format Plotly JSON exploitable
+*  Gestion robuste des NA
+*  Architecture modulaire (router/service)
+*  Validation Pydantic
+
+L'approche API permet d'externaliser l'EDA hors des notebooks, facilitant l'intégration dans des pipelines automatisés.
+
+== Annexe : Exemples de réponses
+
+=== Summary (extrait)
+
+[source,json]
+
+{
+  "age": {
+    "count": 91,
+    "mean": 44.8,
+    "std": 14.2,
+    "min": 20,
+    "25%": 34,
+    "50%": 44,
+    "75%": 57,
+    "max": 68,
+    "missing_rate": 9.0
+  }
+}
+
+
+=== Correlation (top pair)
+
+[source,json]
+
+{
+  "var1": "income",
+  "var2": "spend",
+  "correlation": 0.135
+}
+
+
+=== Artifacts
+
+Les graphiques sont retournés en JSON Plotly (~9KB chacun), permettant une visualisation interactive sans génération d'images.

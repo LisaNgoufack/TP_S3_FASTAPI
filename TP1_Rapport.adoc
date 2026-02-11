@@ -1,0 +1,183 @@
+= TP1 - API Nettoyage & Préparation de Données
+:author: NGOUFACL Judith
+:revdate: 10 Février 2026
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Introduction
+
+Ce projet implémente une API REST pour le nettoyage et la préparation de datasets contenant des défauts de qualité (valeurs manquantes, doublons, outliers, types incohérents).
+
+L'API suit une architecture modulaire (router/service) et respecte une enveloppe de réponse standardisée.
+
+== Architecture
+
+=== Structure du projet
+
+----
+TP1_API_Clean/
+├── app/
+│   ├── main.py                 # Point d'entrée FastAPI
+│   ├── routers/
+│   │   └── clean.py            # Routes API
+│   └── services/
+│       └── clean_service.py    # Logique métier
+----
+
+=== Technologies
+
+* FastAPI : Framework web asynchrone avec validation automatique
+* Pandas : Manipulation et analyse de données
+* NumPy : Calculs numériques et génération aléatoire
+* Pydantic : Validation de schémas
+
+== Fonctionnalités implémentées
+
+=== 1. Génération de datasets (POST /clean/dataset-generate)
+
+Génère un dataset avec défauts injectés contrôlés :
+
+* Valeurs manquantes : 10-20% par colonne numérique
+* Doublons : ~5% de lignes dupliquées  
+* Outliers : 1-3 valeurs extrêmes (mean + 10*std)
+* Types cassés : Valeurs non-numériques dans x2
+
+[source,json]
+----
+{
+  "phase": "clean",
+  "seed": 42,
+  "n": 100
+}
+----
+
+=== 2. Rapport de qualité (GET /clean/report/{dataset_id})
+
+Analyse sans transformation retournant :
+
+* Taux de valeurs manquantes par colonne
+* Nombre et pourcentage de doublons
+* Détection des outliers (méthode 3-sigma)
+* Identification des types incohérents
+
+=== 3. Apprentissage du pipeline (POST /clean/fit)
+
+Calcule les paramètres de nettoyage :
+
+* Imputation : Moyenne ou médiane des colonnes
+* Outliers : Bornes de clipping (mean ± 3*std)
+* Catégoriel : Mapping pour encodage
+
+Retourne un cleaner_id et le rapport de qualité avant nettoyage.
+
+=== 4. Application du nettoyage (POST /clean/transform)
+
+Applique le pipeline appris :
+
+1. Correction des types (conversion en numérique)
+2. Imputation des valeurs manquantes
+3. Gestion des outliers (clip ou remove)
+4. Suppression des doublons
+5. Encodage des variables catégorielles
+
+Retourne le dataset nettoyé avec compteurs détaillés.
+
+== Résultats
+
+=== Exemple de workflow complet
+
+[cols="1,3", options="header"]
+|===
+|Étape |Résultat
+
+|Génération
+|105 lignes, 5 colonnes
+
+|Rapport avant
+|53 NaN, 5 doublons, 4 outliers, 3 erreurs de type
+
+|Nettoyage
+|100 lignes, 7 colonnes (encodage one-hot)
+
+|Rapport après
+|56 imputations, 5 doublons supprimés, 4 outliers clippés
+|===
+
+=== Traçabilité
+
+Tous les compteurs sont documentés :
+
+* rows_before / rows_after
+* imputations
+* duplicates_removed
+* outliers_handled
+* type_errors_fixed
+
+== Conformité au cahier des charges
+
+[cols="2,1,1", options="header"]
+|===
+|Critère |Poids |Statut
+
+|Contrat API (validation + erreurs)
+|30%
+|COMPLET
+
+|Nettoyage (missing + doublons + types + outliers)
+|30%
+|COMPLET
+
+|Traçabilité (reports avant/après + compteurs)
+|20%
+|COMPLET
+
+|Qualité code (router/service séparés)
+|20%
+|COMPLET
+|===
+
+== Conclusion
+
+L'API implémente avec succès l'ensemble des fonctionnalités requises :
+
+*  Génération de datasets avec défauts contrôlés
+*  Analyse de qualité détaillée
+*  Pipeline de nettoyage configurable
+*  Traçabilité complète des transformations
+*  Séparation claire router/service
+*  Validation Pydantic des entrées
+*  Gestion des erreurs (404, 500)
+
+L'architecture modulaire permet une maintenance et extension facilitées.
+
+== Annexe : Commandes de test
+
+=== Workflow complet via curl
+
+[source,bash]
+----
+# 1. Générer dataset
+curl -X POST "http://127.0.0.1:8000/clean/dataset-generate" \
+  -H "Content-Type: application/json" \
+  -d '{"seed": 42, "n": 100}'
+
+# 2. Rapport qualité
+curl -X GET "http://127.0.0.1:8000/clean/report/{dataset_id}"
+
+# 3. Apprentissage pipeline
+curl -X POST "http://127.0.0.1:8000/clean/fit" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_id": "{id}", "impute_strategy": "mean"}'
+
+# 4. Application nettoyage
+curl -X POST "http://127.0.0.1:8000/clean/transform" \
+  -H "Content-Type: application/json" \
+  -d '{"cleaner_id": "{id}"}'
+----
+
+=== Documentation interactive
+
+Accessible via : `http://127.0.0.1:8000/docs`

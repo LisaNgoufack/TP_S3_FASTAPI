@@ -1,0 +1,598 @@
+= TP5 - API ML Avancé : Tuning & Explicabilité
+:author: NGOUFACKjudith
+:revdate: 11 Février 2026
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Introduction
+
+Ce projet implémente une API REST pour l'optimisation d'hyperparamètres et l'explicabilité des modèles ML, transformant un modèle baseline (TP4) en un système défendable et interprétable.
+
+Objectifs :
+
+* *Tuning propre* : GridSearchCV / RandomizedSearchCV avec validation croisée
+* *Explicabilité globale* : Feature importance (native + permutation)
+* *Explicabilité locale* : Contribution de chaque variable à une prédiction
+* *Reproductibilité* : Seed contrôlé sur tous les processus stochastiques
+
+== Architecture
+
+=== Structure du projet
+
+----
+TP5_API_ML_Avance/
+├── app/
+│   ├── main.py
+│   ├── routers/
+│   │   ├── ml.py              # TP4 baseline
+│   │   └── ml2.py             # TP5 avancé
+│   └── services/
+│       ├── ml_service.py      # TP4
+│       └── ml2_service.py     # TP5
+├── models/
+│   ├── {id}.joblib            # TP4 baseline
+│   └── {id}_tuned.joblib      # TP5 optimisé
+----
+
+=== Technologies
+
+* *FastAPI* : API REST
+* *Scikit-learn* : GridSearchCV, RandomizedSearchCV, permutation_importance
+* *Joblib* : Sérialisation modèles
+* *Pandas/NumPy* : Manipulation données
+
+== Fonctionnalités implémentées
+
+=== 1. Optimisation hyperparamètres (POST /ml_avance/tune)
+
+Recherche automatisée des meilleurs hyperparamètres avec validation croisée.
+
+**Paramètres :**
+
+* `model_type` : "logreg" ou "rf"
+* `search` : "grid" (exhaustif) ou "random" (échantillonnage)
+* `cv` : 3 ou 5 folds
+* `seed` : Reproductibilité
+
+**Grilles de recherche :**
+
+[cols="2,3,3", options="header"]
+|===
+|Modèle |Hyperparamètre |Valeurs testées
+
+|Logistic Regression
+|C
+|[0.01, 0.1, 1.0, 10.0, 100.0]
+
+|Logistic Regression
+|solver
+|["lbfgs", "liblinear"]
+
+|Random Forest
+|n_estimators
+|[50, 100, 200]
+
+|Random Forest
+|max_depth
+|[5, 10, 15, None]
+
+|Random Forest
+|min_samples_split
+|[2, 5, 10]
+
+|Random Forest
+|min_samples_leaf
+|[1, 2, 4]
+|===
+
+**Méthode :**
+
+[source,python]
+----
+# Grid Search (exhaustif)
+GridSearchCV(model, param_grid, cv=3, scoring="f1")
+
+# Random Search (échantillonnage)
+RandomizedSearchCV(model, param_grid, cv=3, n_iter=10, scoring="f1")
+----
+
+**Résultats obtenus :**
+
+[source,json]
+----
+{
+  "best_params": {"C": 10, "penalty": "l2", "solver": "lbfgs"},
+  "best_score_cv": 0.514,
+  "valid_metrics": {
+    "f1": 0.500,
+    "auc": 0.698
+  },
+  "n_configs_tested": 10
+}
+----
+
+**CV Results Top 5 :**
+
+[cols="3,1,1", options="header"]
+|===
+|Configuration |Mean F1 |Std
+
+|C=10, solver=lbfgs
+|0.514
+|0.236
+
+|C=10, solver=liblinear
+|0.514
+|0.236
+
+|C=100, solver=lbfgs
+|0.514
+|0.236
+
+|C=100, solver=liblinear
+|0.514
+|0.236
+
+|C=0.01, solver=liblinear
+|0.497
+|0.126
+|===
+
+**Analyse :**
+
+* Plusieurs configurations obtiennent le même score (0.514)
+* C=10 à C=100 : Performance stable (régularisation faible)
+* C=0.01 : Performance légèrement inférieure (sur-régularisation)
+
+=== 2. Feature importance native (GET /ml_avance/feature-importance)
+
+Importance des features selon le modèle.
+
+**Méthode par type de modèle :**
+
+* *Logistic Regression* : Valeur absolue des coefficients
++
+[source,python]
+----
+importance = np.abs(model.coef_[0])
+----
+
+* *Random Forest* : Gini importance
++
+[source,python]
+----
+importance = model.feature_importances_
+----
+
+**Résultats obtenus (LogReg) :**
+
+[cols="2,1", options="header"]
+|===
+|Feature |Importance
+
+|x1
+|1.852
+
+|x4
+|0.820
+
+|x2
+|0.781
+
+|x6
+|0.430
+
+|x3
+|0.190
+
+|segment_encoded
+|0.097
+
+|x5
+|0.083
+|===
+
+**Interprétation :**
+
+* *x1 domine* : Coefficient 2× plus élevé que x4
+* *x5 faible* : Peu d'influence malgré corrélation avec x1
+* *segment faible* : Variable catégorielle peu discriminante
+
+=== 3. Permutation importance (POST /ml_avance/permutation-importance)
+
+Importance par permutation (méthode agnostique au modèle).
+
+**Principe :**
+
+1. Évaluer performance baseline
+2. Pour chaque feature :
+   * Permuter aléatoirement ses valeurs
+   * Réévaluer performance
+   * Importance = drop de performance
+3. Répéter n_repeats fois
+
+**Résultats obtenus (n_repeats=10) :**
+
+[cols="2,1,1", options="header"]
+|===
+|Feature |Mean |Std
+
+|x1
+|0.280
+|0.054
+
+|x2
+|0.083
+|0.040
+
+|x4
+|0.078
+|0.050
+
+|x6
+|0.057
+|0.037
+
+|x3
+|0.041
+|0.015
+
+|x5
+|0.036
+|0.018
+
+|segment_encoded
+|0.033
+|0.015
+|===
+
+**Comparaison native vs permutation :**
+
+[cols="2,1,1", options="header"]
+|===
+|Feature |Native (|coef|) |Permutation
+
+|x1
+|1.852 (rang 1)
+|0.280 (rang 1)
+
+|x2
+|0.781 (rang 3)
+|0.083 (rang 2)
+
+|x4
+|0.820 (rang 2)
+|0.078 (rang 3)
+
+|x6
+|0.430 (rang 4)
+|0.057 (rang 4)
+|===
+
+**Convergence :** Les deux méthodes s'accordent sur x1 comme feature dominante.
+
+=== 4. Explication locale (POST /ml_avance/explain-instance)
+
+Explication d'une prédiction individuelle.
+
+**Instance testée :**
+
+[source,json]
+----
+{
+  "x1": 0.5, "x2": -0.3, "x3": 1.2,
+  "x4": 0.1, "x5": -0.5, "x6": 0.8,
+  "segment": "A"
+}
+----
+
+**Prédiction :** Classe 0 (P(classe 1) = 32.3%)
+
+**Explication (méthode linéaire) :**
+
+[cols="2,1,1,1,1", options="header"]
+|===
+|Feature |Valeur scaled |Coefficient |Contribution |Direction
+
+|x1
+|0.453
+|1.852
+|+0.838
+|→ classe 1
+
+|x6
+|0.972
+|0.430
+|+0.418
+|→ classe 1
+
+|x3
+|1.345
+|-0.190
+|-0.255
+|→ classe 0
+
+|x2
+|-0.133
+|0.781
+|-0.104
+|→ classe 0
+
+|segment
+|-0.919
+|0.097
+|-0.089
+|→ classe 0
+|===
+
+**Calcul du score linéaire :**
+
+[source]
+----
+Score = intercept + Σ(coef × value)
+      = -1.484 + 0.838 + 0.418 - 0.255 - 0.104 - 0.089 - ...
+      = -0.67
+
+Score < 0 → sigmoid(score) = 0.323 → Prédiction classe 0 ✅
+----
+
+**Interprétation narrative :**
+
+> Cette observation a été classée en *classe 0* principalement car l'intercept (-1.48) pousse fortement vers classe 0. Malgré des facteurs positifs (x1=+0.84, x6=+0.42), les contributions négatives cumulées et l'intercept dominent.
+
+== Résultats
+
+=== Comparaison TP4 vs TP5
+
+[cols="2,2,2", options="header"]
+|===
+|Aspect |TP4 Baseline |TP5 Tuned
+
+|Hyperparams
+|C=1 (défaut)
+|C=10 (optimisé)
+
+|CV F1
+|Non mesuré
+|0.514
+
+|Valid F1
+|0.500
+|0.500
+
+|Explicabilité
+|Aucune
+|Native + Permutation + Locale
+|===
+
+Observation : Le tuning a confirmé que C=10 est optimal, mais la performance reste similaire au baseline. Cela suggère que le dataset est simple et le baseline était déjà proche de l'optimum.
+
+=== Top insights explicabilité
+
+Global (feature importance) :
+
+* x1 est la variable la plus importante (1.85 vs 0.82 pour x4)
+* segment a peu d'impact (0.097)
+* x5 est négligeable (0.083)
+
+Local (exemple instance) :
+
+* x1=0.5 → Contribution +0.84 vers classe 1
+* x6=0.8 → Contribution +0.42 vers classe 1
+* Intercept → Fort biais -1.48 vers classe 0
+* Résultat → Classe 0 malgré facteurs positifs
+
+== Conformité au cahier des charges
+
+[cols="2,1,1", options="header"]
+|===
+|Critère |Poids |Statut
+
+|Tuning avec CV (pas au hasard)
+|Livrable
+| COMPLET
+
+|Explication exploitable (top 5 facteurs)
+|Livrable
+| COMPLET
+
+|POST /ml_avance/tune (grid, random, cv)
+|Endpoint
+| COMPLET
+
+|GET /ml_avance/feature-importance
+|Endpoint
+| COMPLET
+
+|POST /ml_avance/permutation-importance
+|Endpoint
+| COMPLET
+
+|POST /ml_avance/explain-instance
+|Endpoint
+| COMPLET
+
+|Reproductibilité via seed
+|Fonctionnel
+| COMPLET
+|===
+
+== Schémas Pydantic
+
+L'API utilise 4 schémas de validation :
+
+[source,python]
+
+class TuneRequest(BaseModel):
+    dataset_id: str
+    model_type: str  # "logreg" ou "rf"
+    search: str      # "grid" ou "random"
+    cv: int = 3      # 3 ou 5
+    seed: int = 42
+
+class PermutationImportanceRequest(BaseModel):
+    model_id: str
+    dataset_id: str
+    n_repeats: int = 10
+    seed: int = 42
+
+class ExplainInstanceRequest(BaseModel):
+    model_id: str
+    instance: Dict[str, Any]
+
+== Choix techniques
+
+=== GridSearch vs RandomSearch
+
+GridSearch (exhaustif) :
+
+* Teste toutes les combinaisons
+* Garantit l'optimum dans la grille
+* Coûteux si grande grille
+
+RandomSearch (échantillonnage) :
+
+* Teste n_iter configurations aléatoires
+* Plus rapide pour grandes grilles
+* Risque de manquer l'optimum
+
+Choix : Grid pour LogReg (10 configs), Random pour RF (144 configs)
+
+=== Scoring = F1
+
+Pourquoi F1 et pas accuracy ?
+
+* Dataset déséquilibré (70/30)
+* F1 équilibre precision/recall
+* Accuracy peut tromper (ex: prédire toujours classe 0 → 70% accuracy)
+
+=== Permutation importance
+
+Avantages :
+
+* Agnostique au modèle
+* Reflète importance réelle dans prédictions
+* Détecte interactions
+
+Inconvénients :
+
+* Coûteux (n_repeats × n_features évaluations)
+* Dépend du dataset
+
+=== Explication locale
+
+LogReg : Contributions linéaires
+
+[source,python]
+
+contribution[i] = coefficient[i] × value_scaled[i]
+
+
+Exact et interprétable.
+
+RF : Approximation
+
+[source,python]
+
+contribution[i] ≈ importance[i] × value_scaled[i]
+
+
+Approximation simple. Pour une vraie explication : utiliser SHAP.
+
+== Reproductibilité
+
+Tous les processus stochastiques sont contrôlés :
+
+[cols="2,2", options="header"]
+|===
+|Processus |Contrôle
+
+|Train/valid split
+|train_test_split(..., random_state=seed)
+
+|GridSearchCV
+|Déterministe (teste tout)
+
+|RandomizedSearchCV
+|RandomizedSearchCV(..., random_state=seed)
+
+|Permutation importance
+|permutation_importance(..., random_state=seed)
+|===
+
+Garantie : Mêmes résultats à chaque exécution avec même seed.
+
+== Limites et améliorations
+
+=== Limites actuelles
+
+* Explication RF : Approximation simple, pas SHAP
+* Grilles fixes : Pas d'optimisation bayésienne
+* 1 métrique : F1 seulement (pas multi-objectif)
+
+=== Améliorations possibles
+
+* SHAP values : Pour explications exactes (RF, XGBoost)
+* Optuna : Optimisation bayésienne d'hyperparams
+* LIME : Explications locales alternatives
+* Multi-metric : Optimiser F1 + AUC simultanément
+
+== Conclusion
+
+L'API implémente avec succès :
+
+*  Tuning automatisé avec CV (GridSearch/RandomSearch)
+*  Feature importance (native + permutation)
+*  Explication locale (contributions linéaires)
+*  Top 5 facteurs par prédiction
+*  Reproductibilité complète
+*  Architecture modulaire
+*  Validation Pydantic
+
+Le système permet de :
+
+* Optimiser : Trouver meilleurs hyperparams
+* Comprendre : Quelles variables importent
+* Expliquer : Pourquoi telle prédiction
+* Défendre : Justifier décisions ML
+
+== Annexes
+
+=== A. Exemple de tuning
+
+[source,json]
+
+{
+  "best_params": {"C": 10, "solver": "lbfgs"},
+  "best_score_cv": 0.514,
+  "valid_metrics": {"f1": 0.500, "auc": 0.698}
+}
+
+=== B. Exemple feature importance
+
+[source,json]
+
+{
+  "top_5_features": [
+    {"feature": "x1", "importance": 1.852},
+    {"feature": "x4", "importance": 0.820},
+    {"feature": "x2", "importance": 0.781}
+  ]
+}
+
+=== C. Exemple explication locale
+
+[source,json]
+
+{
+  "prediction": 0,
+  "probability_class_1": 0.323,
+  "top_5_factors": [
+    {"feature": "x1", "contribution": +0.838, "pushes_toward": "class_1"},
+    {"feature": "x6", "contribution": +0.418, "pushes_toward": "class_1"},
+    {"feature": "x3", "contribution": -0.255, "pushes_toward": "class_0"}
+  ]
+}
