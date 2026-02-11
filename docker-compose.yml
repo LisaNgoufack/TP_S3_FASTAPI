@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  fastapi-app:
+    build: .
+    container_name: api-ml-pipeline
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+    restart: unless-stopped
