@@ -1,6 +1,6 @@
 # API FastAPI - Pipeline ML Complet (5 TPs)
 
-API REST complète pour le Data Science avec FastAPI, incluant nettoyage de données, analyse exploratoire, analyse multivariée, ML baseline et ML avancé.
+API FastAPI, incluant nettoyage de données, analyse exploratoire, analyse multivariée, ML baseline et ML avancé.
 
 ## Fonctionnalités
 
